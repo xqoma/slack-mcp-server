@@ -2,7 +2,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
+const os = require('os');
 const childProcess = require('child_process');
+
+const GITHUB_REPO = 'xqoma/slack-mcp-server';
 
 const BINARY_MAP = {
     darwin_x64:   { name: 'slack-mcp-server-darwin-amd64',    suffix: '' },
@@ -13,54 +17,86 @@ const BINARY_MAP = {
     win32_arm64:  { name: 'slack-mcp-server-windows-arm64',   suffix: '.exe' },
 };
 
-function resolveBinaryPath() {
-    // If DXT installation then we fix empty variables, it's a DXT bug.
-    if (process.env.SLACK_MCP_DXT) {
-        if (process.env.SLACK_MCP_XOXC_TOKEN === '${user_config.xoxc_token}') {
-            process.env.SLACK_MCP_XOXC_TOKEN = '';
-        }
-        if (process.env.SLACK_MCP_XOXD_TOKEN === '${user_config.xoxd_token}') {
-            process.env.SLACK_MCP_XOXD_TOKEN = '';
-        }
-        if (process.env.SLACK_MCP_XOXP_TOKEN === '${user_config.xoxp_token}') {
-            process.env.SLACK_MCP_XOXP_TOKEN = '';
-        }
-        if (process.env.SLACK_MCP_XOXB_TOKEN === '${user_config.xoxb_token}') {
-            process.env.SLACK_MCP_XOXB_TOKEN = '';
-        }
-        if (process.env.SLACK_MCP_ADD_MESSAGE_TOOL === '${user_config.add_message_tool}') {
-            process.env.SLACK_MCP_ADD_MESSAGE_TOOL = '';
-        }
-    }
-
+function getBinaryInfo() {
     const key = `${process.platform}_${process.arch}`;
     const binary = BINARY_MAP[key];
     if (!binary) {
-        throw new Error(`Could not resolve binary for platform/arch: ${process.platform}/${process.arch}`);
+        throw new Error(`Unsupported platform/arch: ${process.platform}/${process.arch}`);
     }
-
-    if (process.env.SLACK_MCP_DXT) {
-        return require.resolve(path.join(__dirname, `${binary.name}${binary.suffix}`));
-    } else {
-        return require.resolve(`${binary.name}/bin/${binary.name}${binary.suffix}`);
-    }
+    return binary;
 }
 
-const binPath = resolveBinaryPath();
-
-// Workaround for https://github.com/anthropics/dxt/issues/13
-if (process.env.SLACK_MCP_DXT) {
-    const stats = fs.statSync(binPath);
-    const execMask = fs.constants.S_IXUSR
-        | fs.constants.S_IXGRP
-        | fs.constants.S_IXOTH;
-
-    if ((stats.mode & execMask) !== execMask) {
-        const newMode = stats.mode | execMask;
-        fs.chmodSync(binPath, newMode);
+function getCacheDir() {
+    const cacheDir = path.join(os.homedir(), '.cache', 'slack-mcp-server');
+    if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
     }
+    return cacheDir;
 }
 
-childProcess.execFileSync(binPath, process.argv.slice(2), {
-    stdio: 'inherit',
+function getLatestRelease() {
+    return new Promise((resolve, reject) => {
+        const options = {
+            hostname: 'api.github.com',
+            path: `/repos/${GITHUB_REPO}/releases/latest`,
+            headers: { 'User-Agent': 'slack-mcp-server-installer' },
+        };
+        https.get(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+            });
+        }).on('error', reject);
+    });
+}
+
+function downloadFile(url, dest) {
+    return new Promise((resolve, reject) => {
+        const follow = (url) => {
+            https.get(url, { headers: { 'User-Agent': 'slack-mcp-server-installer' } }, (res) => {
+                if (res.statusCode === 301 || res.statusCode === 302) {
+                    return follow(res.headers.location);
+                }
+                const file = fs.createWriteStream(dest);
+                res.pipe(file);
+                file.on('finish', () => file.close(resolve));
+                file.on('error', (err) => { fs.unlink(dest, () => {}); reject(err); });
+            }).on('error', reject);
+        };
+        follow(url);
+    });
+}
+
+async function resolveBinaryPath() {
+    const binary = getBinaryInfo();
+    const binaryFileName = `${binary.name}${binary.suffix}`;
+    const cacheDir = getCacheDir();
+    const cachedBinary = path.join(cacheDir, binaryFileName);
+
+    if (fs.existsSync(cachedBinary)) {
+        return cachedBinary;
+    }
+
+    process.stderr.write(`Downloading ${binaryFileName} from GitHub Releases...\n`);
+
+    const release = await getLatestRelease();
+    const asset = release.assets && release.assets.find(a => a.name === binaryFileName);
+    if (!asset) {
+        throw new Error(`Binary ${binaryFileName} not found in latest release ${release.tag_name}`);
+    }
+
+    await downloadFile(asset.browser_download_url, cachedBinary);
+    fs.chmodSync(cachedBinary, 0o755);
+
+    process.stderr.write(`Downloaded to ${cachedBinary}\n`);
+    return cachedBinary;
+}
+
+resolveBinaryPath().then(binPath => {
+    childProcess.execFileSync(binPath, process.argv.slice(2), { stdio: 'inherit' });
+}).catch(err => {
+    process.stderr.write(`Error: ${err.message}\n`);
+    process.exit(1);
 });
+

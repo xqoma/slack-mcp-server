@@ -1,4 +1,22 @@
 # Slack MCP Server
+
+> **⚠️ Fork notice:** This is a temporary fork of [jhutar/slack-mcp-server](https://github.com/jhutar/slack-mcp-server) (itself a fork of [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-mcp-server)).
+>
+> **Why this fork exists:**
+> - Adds [`conversations_open`](https://github.com/korotovsky/slack-mcp-server/issues/221) tool — required to get a DM channel ID for users you haven't messaged before
+> - Includes fix for [PR #249](https://github.com/korotovsky/slack-mcp-server/pull/249) — removes blocking startup on cold cache
+>
+> **How to use:**
+> ```json
+> {
+>   "command": "npx",
+>   "args": ["-y", "github:xqoma/slack-mcp-server", "--transport", "stdio"]
+> }
+> ```
+> Binaries are downloaded automatically from GitHub Releases and cached in `~/.cache/slack-mcp-server/`.
+>
+> **This fork will be abandoned once the above changes are merged into the upstream repository.**
+
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/korotovsky/slack-mcp-server)](https://archestra.ai/mcp-catalog/korotovsky__slack-mcp-server)
 
 Model Context Protocol (MCP) server for Slack Workspaces. The most powerful MCP Slack server — supports Stdio, SSE and HTTP transports, proxy settings, DMs, Group DMs, Smart History fetch (by date or count), may work via OAuth or in complete stealth mode with no permissions and scopes in Workspace 😏.

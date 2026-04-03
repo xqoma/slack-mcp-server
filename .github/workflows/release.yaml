@@ -11,7 +11,6 @@ concurrency:
 
 env:
   GO_VERSION: 1.24
-  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
 permissions:
   contents: write
@@ -51,5 +50,6 @@ jobs:
             docker-compose.yml
 
       - name: Publish npm
+        if: false
         run:
           make npm-publish
